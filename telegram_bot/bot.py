@@ -8,6 +8,8 @@ Handles commands:
   /sources     - List MCP news sources
   /status      - Check system status & LLM backend
   /help        - Command reference
+
+Also handles free-form chat messages via AI.
 """
 
 from __future__ import annotations
@@ -26,7 +28,9 @@ from telegram.ext import (
     Application,
     ApplicationBuilder,
     CommandHandler,
+    MessageHandler,
     ContextTypes,
+    filters,
 )
 
 from agent.news_agent import NewsAgent, split_message_for_telegram
@@ -100,7 +104,7 @@ class TelegramNewsBot:
             logger.error(f"Failed to start scheduler: {e}")
 
     def _register_handlers(self):
-        """Attach command handlers."""
+        """Attach command and message handlers."""
         self.app.add_handler(CommandHandler("start", self.cmd_start))
         self.app.add_handler(CommandHandler(["digest", "news"], self.cmd_digest))
         self.app.add_handler(CommandHandler("topic", self.cmd_topic))
@@ -110,6 +114,10 @@ class TelegramNewsBot:
         self.app.add_handler(CommandHandler("subscribe", self.cmd_subscribe))
         self.app.add_handler(CommandHandler("unsubscribe", self.cmd_unsubscribe))
         self.app.add_handler(CommandHandler("help", self.cmd_help))
+        # Free-form chat handler — catches any text that is NOT a command
+        self.app.add_handler(
+            MessageHandler(filters.TEXT & ~filters.COMMAND, self.cmd_chat)
+        )
 
     async def _send_safe_html(self, chat_id: int, text: str):
         """Send message with HTML parse mode, with automatic fallback if unclosed tags occur."""
@@ -143,7 +151,8 @@ class TelegramNewsBot:
             "✨ <b>Key Features:</b>\n"
             "• <b>Live Multi-Source MCP:</b> Fetches from Google News, Hacker News, TechCrunch, BBC & ArXiv.\n"
             "• <b>Automated Daily Delivery:</b> Sends a newsletter directly to your chat every day at scheduled time.\n"
-            "• <b>On-Demand Intelligence:</b> Ask for instant news or deep dives on any custom topic!\n\n"
+            "• <b>On-Demand Intelligence:</b> Ask for instant news or deep dives on any custom topic!\n"
+            "• <b>Free-form Chat:</b> Just type anything — ask me about any news topic naturally!\n\n"
             "⚡ <b>Quick Commands:</b>\n"
             "• /digest - Get today's newsletter right now\n"
             "• /topic &lt;topic&gt; - Get a newsletter on any topic (e.g. <code>/topic Quantum Computing</code>)\n"
@@ -151,6 +160,7 @@ class TelegramNewsBot:
             "• /sources - View active news feeds & MCP tools\n"
             "• /status - Check AI Agent & MCP server health\n"
             "• /help - Full command manual\n\n"
+            "💬 <b>Or just chat!</b> Type <i>\"what's happening in AI?\"</i> or <i>\"latest crypto news\"</i> and I'll answer!\n\n"
             f"✅ <i>You are subscribed to the daily briefing at <b>{self.scheduler.daily_time} ({self.scheduler.timezone})</b>!</i>"
         )
         await self._send_safe_html(chat_id, welcome_msg)
@@ -195,6 +205,29 @@ class TelegramNewsBot:
         except Exception as e:
             logger.error(f"Error generating topic newsletter: {e}")
             await status_msg.edit_text(f"❌ Failed to generate topic briefing: {e}")
+
+    async def cmd_chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle free-form text messages — AI chat with live news context."""
+        chat_id = update.effective_chat.id
+        user_message = update.message.text or ""
+
+        if not user_message.strip():
+            return
+
+        logger.info(f"Free-form chat from {chat_id}: '{user_message}'")
+
+        # Show typing indicator
+        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+
+        try:
+            response = await self.agent.chat_response(user_message)
+            await self._send_safe_html(chat_id, response)
+        except Exception as e:
+            logger.error(f"Chat response error: {e}")
+            await update.message.reply_text(
+                "😅 Sorry, I ran into an issue fetching that. Try <code>/digest</code> for the full news or ask again!",
+                parse_mode=ParseMode.HTML,
+            )
 
     async def cmd_schedule(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /schedule [HH:MM] command."""
@@ -244,7 +277,8 @@ class TelegramNewsBot:
             f"• <b>Subscribers Count:</b> {len(self.subscribers)}\n"
             f"• <b>Scheduler Active:</b> {'✅ Yes' if sched_status['is_running'] else '❌ No'}\n"
             f"• <b>Daily Delivery Time:</b> {sched_status['daily_time']} ({sched_status['timezone']})\n"
-            f"• <b>Next Scheduled Run:</b> <code>{sched_status['next_run_time']}</code>"
+            f"• <b>Next Scheduled Run:</b> <code>{sched_status['next_run_time']}</code>\n\n"
+            f"💬 <b>Chat Mode:</b> ✅ Active — just type anything to chat!"
         )
         await update.message.reply_text(status_msg, parse_mode=ParseMode.HTML)
 
@@ -274,7 +308,13 @@ class TelegramNewsBot:
             "• <b>/status</b> - Inspect AI Agent and scheduler health\n"
             "• <b>/subscribe</b> - Enable daily morning deliveries\n"
             "• <b>/unsubscribe</b> - Stop daily deliveries\n"
-            "• <b>/help</b> - Show this manual"
+            "• <b>/help</b> - Show this manual\n\n"
+            "💬 <b>Free Chat:</b> Just type any question naturally!\n"
+            "<i>Examples:</i>\n"
+            "• \"what's happening in AI today?\"\n"
+            "• \"latest news on climate change\"\n"
+            "• \"tell me about SpaceX\"\n"
+            "• \"who won the election?\""
         )
         await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
 
@@ -300,4 +340,3 @@ class TelegramNewsBot:
         """Launch Telegram bot polling loop."""
         logger.info("Telegram Bot polling starting...")
         self.app.run_polling()
-
