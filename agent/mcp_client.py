@@ -1,8 +1,9 @@
 """MCP Client for connecting the AI Agent to the News MCP Server.
 
 Supports:
-1. 'stdio' mode: Full JSON-RPC protocol over subprocess stdio using mcp SDK.
-2. 'direct' mode: In-process direct async invocation of registered MCP tools.
+1. 'direct' mode: In-process direct async invocation of registered MCP tools (fastest for combined deploy).
+2. 'stdio' mode: Full JSON-RPC protocol over subprocess stdio using mcp SDK.
+3. 'sse' mode: Remote HTTP/SSE connection to a remotely deployed News MCP Server.
 """
 
 from __future__ import annotations
@@ -18,19 +19,22 @@ logger = logging.getLogger("news-mcp-client")
 
 
 class NewsMCPClient:
-    def __init__(self, mode: str = "direct"):
+    def __init__(self, mode: Optional[str] = None, sse_url: Optional[str] = None):
         """Initialize MCP client.
 
         Args:
-            mode: 'direct' (in-process fast calling) or 'stdio' (MCP JSON-RPC subprocess)
+            mode: 'direct', 'stdio', or 'sse' (remote)
+            sse_url: URL for remote MCP server (e.g. 'https://my-mcp.railway.app/sse')
         """
-        self.mode = mode.lower()
-        self._server_process = None
+        self.mode = (mode or os.getenv("MCP_CLIENT_MODE", "direct")).lower()
+        self.sse_url = sse_url or os.getenv("MCP_SERVER_SSE_URL", "http://localhost:8000/sse")
 
     async def get_top_news(self, category: str = "all", limit: int = 10) -> Dict[str, Any]:
         """Fetch top news from the MCP server."""
         if self.mode == "stdio":
             result_str = await self._call_tool_stdio("get_top_news", {"category": category, "limit": limit})
+        elif self.mode == "sse":
+            result_str = await self._call_tool_sse("get_top_news", {"category": category, "limit": limit})
         else:
             from mcp_server.server import get_top_news
             result_str = await get_top_news(category=category, limit=limit)
@@ -40,6 +44,8 @@ class NewsMCPClient:
         """Search news across feeds via the MCP server."""
         if self.mode == "stdio":
             result_str = await self._call_tool_stdio("search_news", {"query": query, "limit": limit})
+        elif self.mode == "sse":
+            result_str = await self._call_tool_sse("search_news", {"query": query, "limit": limit})
         else:
             from mcp_server.server import search_news
             result_str = await search_news(query=query, limit=limit)
@@ -49,6 +55,8 @@ class NewsMCPClient:
         """Fetch news from a specific publisher."""
         if self.mode == "stdio":
             result_str = await self._call_tool_stdio("get_source_news", {"source": source, "limit": limit})
+        elif self.mode == "sse":
+            result_str = await self._call_tool_sse("get_source_news", {"source": source, "limit": limit})
         else:
             from mcp_server.server import get_source_news
             result_str = await get_source_news(source=source, limit=limit)
@@ -58,6 +66,8 @@ class NewsMCPClient:
         """Fetch full text preview from an article URL."""
         if self.mode == "stdio":
             result_str = await self._call_tool_stdio("get_article_content_preview", {"url": url})
+        elif self.mode == "sse":
+            result_str = await self._call_tool_sse("get_article_content_preview", {"url": url})
         else:
             from mcp_server.server import get_article_content_preview
             result_str = await get_article_content_preview(url=url)
@@ -67,6 +77,8 @@ class NewsMCPClient:
         """List all supported sources and categories."""
         if self.mode == "stdio":
             result_str = await self._call_tool_stdio("list_sources", {})
+        elif self.mode == "sse":
+            result_str = await self._call_tool_sse("list_sources", {})
         else:
             from mcp_server.server import list_sources
             result_str = await list_sources()
@@ -88,7 +100,21 @@ class NewsMCPClient:
                 await session.initialize()
                 result = await session.call_tool(tool_name, arguments)
                 if result.content:
-                    # In MCP 2.x, result.content is a list of content objects (e.g. TextContent)
+                    for content_item in result.content:
+                        if hasattr(content_item, "text"):
+                            return content_item.text
+                return str(result)
+
+    async def _call_tool_sse(self, tool_name: str, arguments: Dict[str, Any]) -> str:
+        """Execute a tool via remote MCP SSE client connection."""
+        from mcp.client.sse import sse_client
+        from mcp.client.session import ClientSession
+
+        async with sse_client(self.sse_url) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool(tool_name, arguments)
+                if result.content:
                     for content_item in result.content:
                         if hasattr(content_item, "text"):
                             return content_item.text
