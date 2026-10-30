@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "name": "news-mcp-server",
+  "builds": [
+    {
+      "src": "news.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    { "src": "/sources",        "dest": "/news.py" },
+    { "src": "/search",         "dest": "/news.py" },
+    { "src": "/article",        "dest": "/news.py" },
+    { "src": "/(.*)",           "dest": "/news.py" }
+  ],
+  "env": {
+    "PYTHONPATH": "."
+  }
+}
