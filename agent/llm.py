@@ -42,7 +42,7 @@ class LLMClient:
                 from google import genai
                 self.gemini_client = genai.Client(api_key=gemini_key)
                 self.active_provider = "gemini"
-                self.active_model = self.model or "gemini-2.5-flash"
+                self.active_model = self.model or "gemini-3.8-flash"
                 logger.info(f"Initialized Gemini backend with model: {self.active_model}")
                 return
             except Exception as e:
@@ -102,16 +102,26 @@ class LLMClient:
 
     async def generate(self, system_prompt: str, user_prompt: str) -> str:
         """Generate newsletter content from prompts."""
+        import asyncio
+
         if self.active_provider == "gemini":
             try:
                 prompt_content = f"{system_prompt}\n\nUser Request & Data:\n{user_prompt}"
-                response = self.gemini_client.models.generate_content(
-                    model=self.active_model,
-                    contents=prompt_content,
+                
+                def _call_gemini():
+                    return self.gemini_client.models.generate_content(
+                        model=self.active_model,
+                        contents=prompt_content,
+                    )
+
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(_call_gemini),
+                    timeout=15.0,
                 )
-                return response.text or ""
+                if response and response.text:
+                    return response.text
             except Exception as e:
-                logger.error(f"Gemini generation error: {e}. Falling back to heuristic synthesizer.")
+                logger.error(f"Gemini generation error or timeout: {e}. Falling back to heuristic synthesizer.")
                 return self._synthesize_fallback(user_prompt)
 
         elif self.active_provider in ("openai", "groq", "ollama"):
