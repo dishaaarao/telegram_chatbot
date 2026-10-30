@@ -11,3 +11,4 @@ pydantic>=2.0.0
 # Supported LLM SDKs
 google-genai>=2.0.0
 openai>=1.40.0
+

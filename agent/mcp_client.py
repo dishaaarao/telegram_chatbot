@@ -93,3 +93,4 @@ class NewsMCPClient:
                         if hasattr(content_item, "text"):
                             return content_item.text
                 return str(result)
+

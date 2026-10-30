@@ -48,3 +48,4 @@ Based on the provided articles retrieved from the news MCP server:
 4. Keep the output formatted cleanly for Telegram using HTML tags (<b>, <i>, <a href="...">).
 5. Stay under 3800 characters.
 """
+

@@ -31,3 +31,4 @@ class NewsResponse(BaseModel):
     query: Optional[str] = Field(default=None, description="Search query keyword if applied")
     count: int = Field(..., description="Number of articles returned")
     articles: List[NewsArticle] = Field(default_factory=list, description="List of articles")
+

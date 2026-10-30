@@ -205,3 +205,4 @@ class LLMClient:
         ])
 
         return "\n".join(newsletter_lines)
+

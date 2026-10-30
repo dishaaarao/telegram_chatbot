@@ -24,3 +24,4 @@ dependencies = [
 [project.scripts]
 news-mcp-server = "mcp_server.server:run_stdio"
 news-telegram-bot = "run_bot:main"
+

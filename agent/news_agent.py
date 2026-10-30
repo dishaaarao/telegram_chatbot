@@ -104,3 +104,4 @@ def split_message_for_telegram(text: str, max_length: int = 4000) -> List[str]:
         chunks.append("\n".join(current_chunk))
 
     return chunks
+

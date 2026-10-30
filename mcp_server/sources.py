@@ -271,3 +271,4 @@ class NewsAggregator:
             filtered = [s for s in samples if s.category == category]
             return filtered if filtered else samples[:limit]
         return samples[:limit]
+

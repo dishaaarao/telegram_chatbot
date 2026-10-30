@@ -21,6 +21,7 @@ from typing import Set
 
 from telegram import Update
 from telegram.constants import ParseMode
+from telegram.request import HTTPXRequest
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -70,13 +71,33 @@ class TelegramNewsBot:
         self.token = token
         self.agent = NewsAgent()
         self.subscribers: Set[int] = load_subscribers()
-        self.app: Application = ApplicationBuilder().token(token).build()
         self.scheduler = DailyDigestScheduler(
             send_callback=self.broadcast_daily_newsletter,
             default_time=os.getenv("DAILY_DIGEST_TIME", "09:00"),
             timezone=os.getenv("TIMEZONE", "Asia/Kolkata"),
         )
+        request = HTTPXRequest(
+            connect_timeout=30.0,
+            read_timeout=30.0,
+            write_timeout=30.0,
+            pool_timeout=30.0,
+        )
+        self.app: Application = (
+            ApplicationBuilder()
+            .token(token)
+            .request(request)
+            .post_init(self._on_post_init)
+            .build()
+        )
         self._register_handlers()
+
+    async def _on_post_init(self, application: Application):
+        """Called by telegram application once event loop is running."""
+        try:
+            self.scheduler.start()
+            logger.info("DailyDigestScheduler initialized inside Telegram event loop.")
+        except Exception as e:
+            logger.error(f"Failed to start scheduler: {e}")
 
     def _register_handlers(self):
         """Attach command handlers."""
@@ -276,7 +297,7 @@ class TelegramNewsBot:
             logger.error(f"Error during scheduled newsletter broadcast: {e}")
 
     def run(self):
-        """Start scheduler and launch Telegram bot polling loop."""
-        self.scheduler.start()
-        logger.info("Telegram Bot polling started...")
+        """Launch Telegram bot polling loop."""
+        logger.info("Telegram Bot polling starting...")
         self.app.run_polling()
+

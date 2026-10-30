@@ -72,3 +72,4 @@ class DailyDigestScheduler:
             "next_run_time": next_run,
             "is_running": self.scheduler.running,
         }
+
