@@ -13,11 +13,16 @@
 ### 1. 📡 MCP News Server (Deployed on Vercel)
 - **What it is:** A live REST API that acts as the "news brain" of the project
 - **What it does:** Fetches real-time news from 5 sources:
-  - Google News RSS
-  - Hacker News (HN API)
-  - TechCrunch (RSS)
-  - The Verge (RSS)
-  - BBC News (RSS)
+  - MarketWatch & Google Finance (Wall Street, Banking, Markets)
+  - Google News Industry & Manufacturing (Semiconductors, Supply Chains)
+  - CoinDesk (Crypto, Bitcoin, Web3)
+  - Google News Energy (Renewables, Clean Tech, Oil & Gas)
+  - Google News Healthcare & Pharma (Biotech, Medicine)
+  - Google News Automotive (EVs, Autonomous Vehicles)
+  - TechCrunch & The Verge (Tech, Startups, Gadgets)
+  - Hacker News (Developer & Tech Discussions)
+  - BBC News (Global & World Affairs)
+  - Dynamic Sector Search Engine (Fetches live news for ANY custom sector)
 - **How it works:** Built with Python serverless functions
 - **Where it's deployed:** `https://telegram-chatbot-beige.vercel.app`
 - **API Endpoints:**
