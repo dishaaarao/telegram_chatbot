@@ -35,6 +35,8 @@ class NewsMCPClient:
             result_str = await self._call_tool_stdio("get_top_news", {"category": category, "limit": limit})
         elif self.mode == "sse":
             result_str = await self._call_tool_sse("get_top_news", {"category": category, "limit": limit})
+        elif self.mode == "http":
+            return await self._http_get("", {"category": category, "limit": limit})
         else:
             from mcp_server.server import get_top_news
             result_str = await get_top_news(category=category, limit=limit)
@@ -46,6 +48,8 @@ class NewsMCPClient:
             result_str = await self._call_tool_stdio("search_news", {"query": query, "limit": limit})
         elif self.mode == "sse":
             result_str = await self._call_tool_sse("search_news", {"query": query, "limit": limit})
+        elif self.mode == "http":
+            return await self._http_get("/search", {"query": query, "limit": limit})
         else:
             from mcp_server.server import search_news
             result_str = await search_news(query=query, limit=limit)
@@ -57,6 +61,8 @@ class NewsMCPClient:
             result_str = await self._call_tool_stdio("get_source_news", {"source": source, "limit": limit})
         elif self.mode == "sse":
             result_str = await self._call_tool_sse("get_source_news", {"source": source, "limit": limit})
+        elif self.mode == "http":
+            return await self._http_get("/search", {"query": source, "limit": limit})
         else:
             from mcp_server.server import get_source_news
             result_str = await get_source_news(source=source, limit=limit)
@@ -68,6 +74,8 @@ class NewsMCPClient:
             result_str = await self._call_tool_stdio("get_article_content_preview", {"url": url})
         elif self.mode == "sse":
             result_str = await self._call_tool_sse("get_article_content_preview", {"url": url})
+        elif self.mode == "http":
+            return await self._http_post("/article", {"url": url})
         else:
             from mcp_server.server import get_article_content_preview
             result_str = await get_article_content_preview(url=url)
@@ -79,6 +87,8 @@ class NewsMCPClient:
             result_str = await self._call_tool_stdio("list_sources", {})
         elif self.mode == "sse":
             result_str = await self._call_tool_sse("list_sources", {})
+        elif self.mode == "http":
+            return await self._http_get("/sources", {})
         else:
             from mcp_server.server import list_sources
             result_str = await list_sources()
@@ -105,18 +115,22 @@ class NewsMCPClient:
                             return content_item.text
                 return str(result)
 
-    async def _call_tool_sse(self, tool_name: str, arguments: Dict[str, Any]) -> str:
-        """Execute a tool via remote MCP SSE client connection."""
-        from mcp.client.sse import sse_client
-        from mcp.client.session import ClientSession
+    async def _http_get(self, path: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Call the remote Vercel MCP HTTP API with GET."""
+        import httpx
+        base = self.sse_url.rstrip("/")
+        query = "&".join(f"{k}={v}" for k, v in params.items())
+        url = f"{base}{path}{'?' + query if query else ''}"
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(url)
+            return resp.json()
 
-        async with sse_client(self.sse_url) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool(tool_name, arguments)
-                if result.content:
-                    for content_item in result.content:
-                        if hasattr(content_item, "text"):
-                            return content_item.text
-                return str(result)
+    async def _http_post(self, path: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Call the remote Vercel MCP HTTP API with POST."""
+        import httpx
+        base = self.sse_url.rstrip("/")
+        url = f"{base}{path}"
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.post(url, json=body)
+            return resp.json()
 

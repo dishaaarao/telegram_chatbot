@@ -1,15 +1,16 @@
-"""Telegram Bot for AI News Agent with Daily Automation.
+"""Telegram Bot for AI News Agent with Multi-Sector & Financial Intelligence.
 
 Handles commands:
-  /start       - Welcome & subscribe to daily briefing
-  /digest      - Generate and send news digest immediately
-  /topic <kw>  - Generate custom topic briefing
-  /schedule    - View or change daily delivery time
-  /sources     - List MCP news sources
-  /status      - Check system status & LLM backend
-  /help        - Command reference
+  /start            - Welcome & overview
+  /digest [sector]  - Structured newsletter for all or any sector (finance, industry, tech, etc.)
+  /sector <name>    - Live sector intelligence briefing
+  /topic <kw>       - Custom topic briefing
+  /schedule [HH:MM] - Daily automated briefing time
+  /sources          - List all MCP feeds & sectors
+  /status           - Check agent & scheduler health
+  /help             - Full command guide
 
-Also handles free-form chat messages via AI.
+Also handles free-form natural conversational chat with live news grounding.
 """
 
 from __future__ import annotations
@@ -107,6 +108,7 @@ class TelegramNewsBot:
         """Attach command and message handlers."""
         self.app.add_handler(CommandHandler("start", self.cmd_start))
         self.app.add_handler(CommandHandler(["digest", "news"], self.cmd_digest))
+        self.app.add_handler(CommandHandler(["sector", "industry", "finance"], self.cmd_sector))
         self.app.add_handler(CommandHandler("topic", self.cmd_topic))
         self.app.add_handler(CommandHandler("schedule", self.cmd_schedule))
         self.app.add_handler(CommandHandler("sources", self.cmd_sources))
@@ -145,49 +147,72 @@ class TelegramNewsBot:
         save_subscribers(self.subscribers)
 
         welcome_msg = (
-            "👋 <b>Welcome to the AI News Agent & Telegram Newsletter Bot!</b>\n\n"
-            "This bot combines <b>Model Context Protocol (MCP)</b> with <b>LLM Agent Intelligence</b> "
-            "to bring you curated daily intelligence briefings.\n\n"
-            "✨ <b>Key Features:</b>\n"
-            "• <b>Live Multi-Source MCP:</b> Fetches from Google News, Hacker News, TechCrunch, BBC & ArXiv.\n"
-            "• <b>Automated Daily Delivery:</b> Sends a newsletter directly to your chat every day at scheduled time.\n"
-            "• <b>On-Demand Intelligence:</b> Ask for instant news or deep dives on any custom topic!\n"
-            "• <b>Free-form Chat:</b> Just type anything — ask me about any news topic naturally!\n\n"
-            "⚡ <b>Quick Commands:</b>\n"
-            "• /digest - Get today's newsletter right now\n"
-            "• /topic &lt;topic&gt; - Get a newsletter on any topic (e.g. <code>/topic Quantum Computing</code>)\n"
-            "• /schedule - View or change scheduled delivery time\n"
-            "• /sources - View active news feeds & MCP tools\n"
-            "• /status - Check AI Agent & MCP server health\n"
-            "• /help - Full command manual\n\n"
-            "💬 <b>Or just chat!</b> Type <i>\"what's happening in AI?\"</i> or <i>\"latest crypto news\"</i> and I'll answer!\n\n"
-            f"✅ <i>You are subscribed to the daily briefing at <b>{self.scheduler.daily_time} ({self.scheduler.timezone})</b>!</i>"
+            "👋 <b>Welcome to the AI News & Financial Intelligence Agent!</b>\n\n"
+            "Powered by <b>Model Context Protocol (MCP)</b> + <b>LLM Intelligence</b>, "
+            "I provide real-time updates across <b>all sectors and financial markets</b>.\n\n"
+            "📊 <b>Supported Sectors:</b>\n"
+            "• 💰 <b>Finance & Banking</b> (MarketWatch, Wall Street, Fed)\n"
+            "• 🏭 <b>Industry & Manufacturing</b> (Supply chains, chips, production)\n"
+            "• ⚡ <b>Energy & Clean Tech</b> (Oil & gas, solar, renewables)\n"
+            "• 💊 <b>Healthcare & Pharma</b> (Biotech, clinical trials)\n"
+            "• 🚗 <b>Automotive</b> (EVs, Tesla, mobility)\n"
+            "• 🪙 <b>Crypto & Web3</b> (CoinDesk, Bitcoin, Ethereum)\n"
+            "• 💻 <b>Tech & AI</b> (TechCrunch, The Verge, ArXiv)\n"
+            "• 🌐 <i>Plus ANY custom sector (e.g. real estate, retail, aerospace)!</i>\n\n"
+            "⚡ <b>Commands:</b>\n"
+            "• <code>/digest [sector]</code> - e.g. <code>/digest finance</code> or <code>/digest industry</code>\n"
+            "• <code>/sector &lt;name&gt;</code> - Deep dive into any sector (e.g. <code>/sector healthcare</code>)\n"
+            "• <code>/topic &lt;query&gt;</code> - Custom topic briefing\n"
+            "• <code>/schedule [HH:MM]</code> - Set automated morning delivery time\n"
+            "• <code>/sources</code> - View active MCP feeds\n"
+            "• <code>/help</code> - Full guide\n\n"
+            "💬 <b>Or just chat!</b> Ask <i>\"what's happening in Indian markets?\"</i> or <i>\"give me banking news\"</i>!\n\n"
+            f"✅ <i>Subscribed for daily delivery at <b>{self.scheduler.daily_time} ({self.scheduler.timezone})</b>!</i>"
         )
         await self._send_safe_html(chat_id, welcome_msg)
 
     async def cmd_digest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /digest or /news command."""
+        """Handle /digest [sector] command."""
         chat_id = update.effective_chat.id
+        sector = context.args[0].lower() if context.args else "all"
+
         status_msg = await update.message.reply_text(
-            "⏳ <i>Querying News MCP Server and synthesizing your newsletter...</i>",
+            f"⏳ <i>Querying News MCP Server for <b>{sector.upper()}</b> and synthesizing briefing...</i>",
             parse_mode=ParseMode.HTML,
         )
 
         try:
-            category = context.args[0].lower() if context.args else "all"
-            newsletter = await self.agent.generate_daily_newsletter(category=category, limit=8)
+            newsletter = await self.agent.generate_daily_newsletter(category=sector, limit=8)
             await status_msg.delete()
             await self._send_safe_html(chat_id, newsletter)
         except Exception as e:
-            logger.error(f"Error generating digest: {e}")
-            await status_msg.edit_text(f"❌ Failed to generate newsletter: {e}")
+            logger.error(f"Error generating digest for {sector}: {e}")
+            await status_msg.edit_text(f"❌ Failed to generate {sector} briefing: {e}")
+
+    async def cmd_sector(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /sector <name> command (e.g. /sector finance, /sector industry)."""
+        chat_id = update.effective_chat.id
+        sector = " ".join(context.args).lower().strip() if context.args else "finance"
+
+        status_msg = await update.message.reply_text(
+            f"📊 <i>Gathering live sector intelligence for <b>{sector.title()}</b>...</i>",
+            parse_mode=ParseMode.HTML,
+        )
+
+        try:
+            newsletter = await self.agent.generate_daily_newsletter(category=sector, limit=8)
+            await status_msg.delete()
+            await self._send_safe_html(chat_id, newsletter)
+        except Exception as e:
+            logger.error(f"Error generating sector briefing: {e}")
+            await status_msg.edit_text(f"❌ Failed to generate sector briefing: {e}")
 
     async def cmd_topic(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /topic <topic> command."""
         chat_id = update.effective_chat.id
         if not context.args:
             await update.message.reply_text(
-                "ℹ️ Please provide a topic!\nExample: <code>/topic Artificial Intelligence</code>",
+                "ℹ️ Please provide a topic or company!\nExample: <code>/topic Semiconductor Industry</code>",
                 parse_mode=ParseMode.HTML,
             )
             return
@@ -207,7 +232,7 @@ class TelegramNewsBot:
             await status_msg.edit_text(f"❌ Failed to generate topic briefing: {e}")
 
     async def cmd_chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle free-form text messages — AI chat with live news context."""
+        """Handle free-form text messages — AI chat with live news and sector grounding."""
         chat_id = update.effective_chat.id
         user_message = update.message.text or ""
 
@@ -215,8 +240,6 @@ class TelegramNewsBot:
             return
 
         logger.info(f"Free-form chat from {chat_id}: '{user_message}'")
-
-        # Show typing indicator
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
         try:
@@ -225,7 +248,7 @@ class TelegramNewsBot:
         except Exception as e:
             logger.error(f"Chat response error: {e}")
             await update.message.reply_text(
-                "😅 Sorry, I ran into an issue fetching that. Try <code>/digest</code> for the full news or ask again!",
+                "😅 I had a hiccup checking that. Ask me again or try <code>/digest finance</code>!",
                 parse_mode=ParseMode.HTML,
             )
 
@@ -258,13 +281,26 @@ class TelegramNewsBot:
         sources_data = await self.agent.get_supported_sources()
         sources_list = sources_data.get("sources", [])
         
-        lines = ["📡 <b>Active MCP News Sources:</b>\n"]
-        for s in sources_list:
-            name = s.get("name", "Unknown")
-            cats = ", ".join(s.get("categories", []))
-            lines.append(f"• <b>{name}</b> (<i>{cats}</i>)")
-
-        lines.append("\n🛠️ <b>MCP Protocol:</b> Standardized Tool Calling via FastMCP / MCPServer")
+        lines = [
+            "📡 <b>Active News & Financial MCP Sources:</b>\n",
+            "• <b>MarketWatch</b> (<i>Wall Street, Stocks, Markets</i>)",
+            "• <b>Google News Business & Finance</b> (<i>Banking, Economics</i>)",
+            "• <b>Google News Industry & Manufacturing</b> (<i>Chips, Supply Chains</i>)",
+            "• <b>CoinDesk</b> (<i>Crypto, Bitcoin, Ethereum, Web3</i>)",
+            "• <b>Google News Energy</b> (<i>Oil, Gas, Clean Energy</i>)",
+            "• <b>Google News Healthcare</b> (<i>Pharma, Biotech</i>)",
+            "• <b>TechCrunch & The Verge</b> (<i>Tech Startups, Devices</i>)",
+            "• <b>Hacker News</b> (<i>Developer & Tech Discussions</i>)",
+            "• <b>BBC News</b> (<i>World & Global Affairs</i>)",
+            "• <b>Google News Sector Engine</b> (<i>Live search across ANY custom sector</i>)\n",
+            "📊 <b>Try commands:</b>",
+            "• <code>/sector finance</code>",
+            "• <code>/sector industry</code>",
+            "• <code>/sector energy</code>",
+            "• <code>/sector healthcare</code>",
+            "• <code>/sector crypto</code>",
+            "• <code>/sector automotive</code>",
+        ]
         await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -278,7 +314,7 @@ class TelegramNewsBot:
             f"• <b>Scheduler Active:</b> {'✅ Yes' if sched_status['is_running'] else '❌ No'}\n"
             f"• <b>Daily Delivery Time:</b> {sched_status['daily_time']} ({sched_status['timezone']})\n"
             f"• <b>Next Scheduled Run:</b> <code>{sched_status['next_run_time']}</code>\n\n"
-            f"💬 <b>Chat Mode:</b> ✅ Active — just type anything to chat!"
+            f"📊 <b>Sector Coverage:</b> Finance, Industry, Energy, Healthcare, Crypto, Automotive, Tech + Any Custom Sector"
         )
         await update.message.reply_text(status_msg, parse_mode=ParseMode.HTML)
 
@@ -300,21 +336,20 @@ class TelegramNewsBot:
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command."""
         help_text = (
-            "📖 <b>AI News Agent Command Guide:</b>\n\n"
-            "• <b>/digest [category]</b> - Generate immediate newsletter (categories: <code>all</code>, <code>tech</code>, <code>ai</code>, <code>business</code>, <code>world</code>)\n"
-            "• <b>/topic &lt;keyword&gt;</b> - Custom deep-dive newsletter on any topic\n"
+            "📖 <b>AI News & Financial Agent Guide:</b>\n\n"
+            "• <b>/digest [sector]</b> - Morning briefing for <code>all</code>, <code>finance</code>, <code>industry</code>, <code>energy</code>, <code>tech</code>, etc.\n"
+            "• <b>/sector &lt;name&gt;</b> - Instant sector briefing (e.g. <code>/sector healthcare</code> or <code>/sector real estate</code>)\n"
+            "• <b>/topic &lt;keyword&gt;</b> - Custom deep-dive on any subject/company\n"
             "• <b>/schedule [HH:MM]</b> - View or set daily delivery time\n"
-            "• <b>/sources</b> - View news feeds configured in MCP server\n"
+            "• <b>/sources</b> - List all news & financial feeds\n"
             "• <b>/status</b> - Inspect AI Agent and scheduler health\n"
             "• <b>/subscribe</b> - Enable daily morning deliveries\n"
-            "• <b>/unsubscribe</b> - Stop daily deliveries\n"
-            "• <b>/help</b> - Show this manual\n\n"
-            "💬 <b>Free Chat:</b> Just type any question naturally!\n"
-            "<i>Examples:</i>\n"
-            "• \"what's happening in AI today?\"\n"
-            "• \"latest news on climate change\"\n"
-            "• \"tell me about SpaceX\"\n"
-            "• \"who won the election?\""
+            "• <b>/unsubscribe</b> - Stop daily deliveries\n\n"
+            "💬 <b>Chat Naturally:</b>\n"
+            "• <i>\"What's the latest finance news?\"</i>\n"
+            "• <i>\"How is the manufacturing industry doing?\"</i>\n"
+            "• <i>\"Any updates on the automotive sector?\"</i>\n"
+            "• <i>\"Tell me about renewable energy trends\"</i>"
         )
         await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
 

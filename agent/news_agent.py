@@ -1,6 +1,7 @@
 """AI News Agent and Conversational Assistant.
 
 Orchestrates news retrieval via the Model Context Protocol (MCP) server
+across all sectors (Finance, Industry, Tech, Energy, Healthcare, Crypto, etc.)
 and synthesizes formatted newsletters or natural conversational responses using LLMs.
 """
 
@@ -19,6 +20,18 @@ from .prompts import NEWSLETTER_SYSTEM_PROMPT, CUSTOM_TOPIC_PROMPT, CHAT_SYSTEM_
 
 logger = logging.getLogger("news-agent")
 
+SECTOR_KEYWORDS: Dict[str, List[str]] = {
+    "finance": ["finance", "financial", "banking", "bank", "banks", "stock", "stocks", "market", "markets", "wall street", "investing", "economy", "fed", "inflation"],
+    "industry": ["industry", "industrial", "manufacturing", "semiconductor", "semiconductors", "chip", "chips", "supply chain", "factories"],
+    "crypto": ["crypto", "cryptocurrency", "bitcoin", "btc", "ethereum", "eth", "web3", "defi", "blockchain"],
+    "energy": ["energy", "oil", "gas", "renewables", "renewable", "solar", "wind", "clean energy", "power"],
+    "healthcare": ["healthcare", "health", "pharma", "pharmaceutical", "biotech", "medical", "drugs", "hospital"],
+    "automotive": ["automotive", "auto", "car", "cars", "ev", "evs", "electric vehicle", "vehicles"],
+    "tech": ["tech", "technology", "software", "hardware", "gadget", "gadgets"],
+    "ai": ["ai", "artificial intelligence", "llm", "generative ai", "openai", "anthropic"],
+    "business": ["business", "corporate", "merger", "acquisition", "enterprise"],
+}
+
 
 class NewsAgent:
     def __init__(self, mcp_mode: Optional[str] = None):
@@ -28,16 +41,16 @@ class NewsAgent:
         self.llm = LLMClient()
         logger.info(f"NewsAgent initialized (MCP Mode: {mode}, LLM: {self.llm.active_provider})")
 
-    async def generate_daily_newsletter(self, category: str = "all", limit: int = 12) -> str:
-        """Fetch news across categories using MCP and synthesize daily briefing."""
-        logger.info(f"Agent fetching top news via MCP (category={category}, limit={limit})...")
+    async def generate_daily_newsletter(self, category: str = "all", limit: int = 10) -> str:
+        """Fetch news across categories or specific sectors using MCP and synthesize briefing."""
+        logger.info(f"Agent fetching news via MCP (category/sector={category}, limit={limit})...")
         
         news_data = await self.mcp.get_top_news(category=category, limit=limit)
         articles = news_data.get("articles", [])
 
         date_str = datetime.now().strftime("%A, %d %B %Y")
         prompt_payload = {
-            "instruction": "Synthesize a structured, executive-grade daily newsletter for Telegram based on the following verified articles from our MCP server.",
+            "instruction": f"Synthesize an executive intelligence newsletter for Telegram focusing on sector: '{category.upper()}'.",
             "current_date": date_str,
             "category": category,
             "total_articles_fetched": len(articles),
@@ -55,8 +68,8 @@ class NewsAgent:
         return newsletter.strip()
 
     async def generate_topic_newsletter(self, topic: str, limit: int = 8) -> str:
-        """Search news on a specific topic via MCP and generate focused briefing."""
-        logger.info(f"Agent searching topic '{topic}' via MCP...")
+        """Search news on a specific topic or sector via MCP and generate focused briefing."""
+        logger.info(f"Agent searching topic/sector '{topic}' via MCP...")
         news_data = await self.mcp.search_news(query=topic, limit=limit)
         articles = news_data.get("articles", [])
 
@@ -77,41 +90,62 @@ class NewsAgent:
         return newsletter.strip()
 
     async def chat_response(self, user_message: str) -> str:
-        """Handle free-form chat messages — normal friendly chat with live news awareness."""
+        """Handle conversational chat — with automatic live sector & news grounding."""
         logger.info(f"Chat query: '{user_message}'")
+        msg_lower = user_message.lower()
 
-        # Check if the user is asking about current news/events specifically
-        news_indicators = r"\b(news|latest|update|updates|happened|happening|today|current|headlines|breaking)\b"
-        wants_news = bool(re.search(news_indicators, user_message.lower()))
+        # 1. Detect if the user is asking about a specific sector or live news
+        detected_sector: Optional[str] = None
+        for sector, kws in SECTOR_KEYWORDS.items():
+            for kw in kws:
+                if re.search(r"\b" + re.escape(kw) + r"\b", msg_lower):
+                    detected_sector = sector
+                    break
+            if detected_sector:
+                break
 
-        # Strip filler words to build clean search terms if news context is helpful
-        filler = {"what", "is", "are", "the", "a", "an", "tell", "me", "about",
-                  "whats", "happening", "with", "latest", "news", "on", "in",
-                  "give", "get", "show", "any", "update", "updates", "today",
-                  "how", "why", "who", "can", "you", "please"}
-        words = re.findall(r"\b\w+\b", user_message.lower())
-        keywords = [w for w in words if w not in filler and len(w) > 2]
-        search_query = " ".join(keywords[:4])
+        # Check for explicit sector mention like "real estate sector" or "defence industry"
+        custom_sector_match = re.search(r"\b([\w\s]{3,20})\s+(sector|industry|market)\b", msg_lower)
+        if not detected_sector and custom_sector_match:
+            detected_sector = custom_sector_match.group(1).strip()
+
+        news_indicators = r"\b(news|latest|update|updates|happened|happening|today|current|headlines|breaking|briefing|stock|market|sector|industry|finance|economy)\b"
+        wants_news = bool(re.search(news_indicators, msg_lower))
 
         casual_patterns = r"^(hi|hello|hey|yo|thanks|thank you|ok|okay|cool|great|nice|bye|good\s*(morning|evening|night|day)|how are you|who are you|what can you do)[\s!?.]*$"
         is_casual = bool(re.match(casual_patterns, user_message.strip().lower()))
 
         articles = []
-        # If user specifically wants news, or asked about a specific proper noun/topic
-        if wants_news and search_query and not is_casual:
+        if (wants_news or detected_sector) and not is_casual:
             try:
-                news_data = await self.mcp.search_news(query=search_query, limit=3)
-                articles = news_data.get("articles", [])
-                logger.info(f"Fetched {len(articles)} articles for chat query '{search_query}'")
+                if detected_sector:
+                    # Fetch from MCP using sector category
+                    logger.info(f"Querying live news for detected sector: '{detected_sector}'")
+                    news_data = await self.mcp.get_top_news(category=detected_sector, limit=4)
+                    articles = news_data.get("articles", [])
+                else:
+                    # Search using keywords
+                    words = re.findall(r"\b\w+\b", msg_lower)
+                    filler = {"what", "is", "are", "the", "a", "an", "tell", "me", "about",
+                              "whats", "happening", "with", "latest", "news", "on", "in",
+                              "give", "get", "show", "any", "update", "updates", "today",
+                              "how", "why", "who", "can", "you", "please"}
+                    keywords = [w for w in words if w not in filler and len(w) > 2]
+                    search_query = " ".join(keywords[:4]) or user_message
+                    logger.info(f"Searching live news for keywords: '{search_query}'")
+                    news_data = await self.mcp.search_news(query=search_query, limit=4)
+                    articles = news_data.get("articles", [])
             except Exception as e:
-                logger.warning(f"Could not fetch news for chat: {e}")
+                logger.warning(f"Could not fetch live news for chat: {e}")
 
-        # Build clean prompt
+        # Build prompt payload
         date_str = datetime.now().strftime("%A, %d %B %Y")
         prompt_payload: Dict[str, Any] = {
             "user_message": user_message,
             "current_date": date_str,
         }
+        if detected_sector:
+            prompt_payload["detected_sector"] = detected_sector
         if articles:
             prompt_payload["live_news_context"] = articles
 
@@ -125,7 +159,7 @@ class NewsAgent:
         return response.strip()
 
     async def get_supported_sources(self) -> Dict[str, Any]:
-        """Fetch available sources from MCP."""
+        """Fetch available sources and sectors from MCP."""
         return await self.mcp.list_sources()
 
 
