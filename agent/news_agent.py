@@ -1,7 +1,7 @@
-"""AI News Agent.
+"""AI News Agent and Conversational Assistant.
 
 Orchestrates news retrieval via the Model Context Protocol (MCP) server
-and synthesizes formatted, multi-section daily newsletters using LLMs.
+and synthesizes formatted newsletters or natural conversational responses using LLMs.
 """
 
 from __future__ import annotations
@@ -32,11 +32,9 @@ class NewsAgent:
         """Fetch news across categories using MCP and synthesize daily briefing."""
         logger.info(f"Agent fetching top news via MCP (category={category}, limit={limit})...")
         
-        # 1. Query the MCP server
         news_data = await self.mcp.get_top_news(category=category, limit=limit)
         articles = news_data.get("articles", [])
 
-        # 2. Prepare user prompt for LLM
         date_str = datetime.now().strftime("%A, %d %B %Y")
         prompt_payload = {
             "instruction": "Synthesize a structured, executive-grade daily newsletter for Telegram based on the following verified articles from our MCP server.",
@@ -48,10 +46,10 @@ class NewsAgent:
 
         user_content = json.dumps(prompt_payload, indent=2)
 
-        # 3. Generate synthesized newsletter
         newsletter = await self.llm.generate(
             system_prompt=NEWSLETTER_SYSTEM_PROMPT,
             user_prompt=user_content,
+            is_chat=False,
         )
 
         return newsletter.strip()
@@ -74,51 +72,55 @@ class NewsAgent:
         newsletter = await self.llm.generate(
             system_prompt=system_prompt,
             user_prompt=user_content,
+            is_chat=False,
         )
         return newsletter.strip()
 
     async def chat_response(self, user_message: str) -> str:
-        """Handle free-form chat messages — fetch relevant live news and reply conversationally."""
+        """Handle free-form chat messages — normal friendly chat with live news awareness."""
         logger.info(f"Chat query: '{user_message}'")
 
-        # Extract keywords from the message for news search
-        # Strip common filler words to get meaningful search terms
+        # Check if the user is asking about current news/events specifically
+        news_indicators = r"\b(news|latest|update|updates|happened|happening|today|current|headlines|breaking)\b"
+        wants_news = bool(re.search(news_indicators, user_message.lower()))
+
+        # Strip filler words to build clean search terms if news context is helpful
         filler = {"what", "is", "are", "the", "a", "an", "tell", "me", "about",
                   "whats", "happening", "with", "latest", "news", "on", "in",
-                  "give", "get", "show", "any", "update", "updates", "today"}
+                  "give", "get", "show", "any", "update", "updates", "today",
+                  "how", "why", "who", "can", "you", "please"}
         words = re.findall(r"\b\w+\b", user_message.lower())
         keywords = [w for w in words if w not in filler and len(w) > 2]
-        search_query = " ".join(keywords[:5]) if keywords else user_message
+        search_query = " ".join(keywords[:4])
 
-        # Detect if this is a casual/greeting message — skip news fetch
-        casual_patterns = r"^(hi|hello|hey|thanks|thank you|ok|okay|cool|great|nice|bye|good\s*(morning|evening|night|day)|how are you|who are you|what can you do)[\s!?.]*$"
+        casual_patterns = r"^(hi|hello|hey|yo|thanks|thank you|ok|okay|cool|great|nice|bye|good\s*(morning|evening|night|day)|how are you|who are you|what can you do)[\s!?.]*$"
         is_casual = bool(re.match(casual_patterns, user_message.strip().lower()))
 
         articles = []
-        if not is_casual and search_query:
+        # If user specifically wants news, or asked about a specific proper noun/topic
+        if wants_news and search_query and not is_casual:
             try:
-                news_data = await self.mcp.search_news(query=search_query, limit=4)
+                news_data = await self.mcp.search_news(query=search_query, limit=3)
                 articles = news_data.get("articles", [])
                 logger.info(f"Fetched {len(articles)} articles for chat query '{search_query}'")
             except Exception as e:
                 logger.warning(f"Could not fetch news for chat: {e}")
 
-        # Build user prompt
+        # Build clean prompt
         date_str = datetime.now().strftime("%A, %d %B %Y")
         prompt_payload: Dict[str, Any] = {
             "user_message": user_message,
             "current_date": date_str,
         }
         if articles:
-            prompt_payload["live_news_articles"] = articles
-        else:
-            prompt_payload["note"] = "No matching live articles found. Answer from general knowledge."
+            prompt_payload["live_news_context"] = articles
 
         user_content = json.dumps(prompt_payload, indent=2)
 
         response = await self.llm.generate(
             system_prompt=CHAT_SYSTEM_PROMPT,
             user_prompt=user_content,
+            is_chat=True,
         )
         return response.strip()
 

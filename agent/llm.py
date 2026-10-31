@@ -1,11 +1,11 @@
-"""Unified LLM Provider for News Agent.
+"""Unified LLM Provider for News Agent and Conversational Chat.
 
 Supports:
-- Google Gemini (gemini-2.5-flash, gemini-1.5-flash, etc.)
+- Google Gemini (gemini-3.5-flash-lite, gemini-3.1-flash-lite, gemini-3.8-flash with auto-fallback)
 - OpenAI (gpt-4o-mini, gpt-4o)
 - Groq (llama-3.3-70b-versatile, etc.)
-- Ollama / Custom OpenAI-compatible endpoints
-- Built-in heuristic synthesizer fallback (when no API key is provided)
+- Ollama / Custom endpoints
+- Smart conversational fallback for normal chat and newsletter fallback for digests
 """
 
 from __future__ import annotations
@@ -14,8 +14,20 @@ import os
 import logging
 from datetime import datetime
 from typing import Optional, List, Dict, Any
+from dotenv import load_dotenv
+
+# Ensure environment variables are loaded
+load_dotenv()
 
 logger = logging.getLogger("news-agent-llm")
+
+# Primary and fallback Gemini models
+GEMINI_MODELS = [
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3.8-flash",
+    "gemini-flash-latest",
+]
 
 
 class LLMClient:
@@ -42,7 +54,7 @@ class LLMClient:
                 from google import genai
                 self.gemini_client = genai.Client(api_key=gemini_key)
                 self.active_provider = "gemini"
-                self.active_model = self.model or "gemini-3.8-flash"
+                self.active_model = self.model or "gemini-3.5-flash-lite"
                 logger.info(f"Initialized Gemini backend with model: {self.active_model}")
                 return
             except Exception as e:
@@ -98,31 +110,36 @@ class LLMClient:
         # Fallback heuristic mode
         self.active_provider = "fallback"
         self.active_model = "heuristic-curator"
-        logger.info("No active LLM API keys detected. Operating in high-fidelity heuristic newsletter mode.")
+        logger.info("No active LLM API keys detected. Operating in fallback mode.")
 
-    async def generate(self, system_prompt: str, user_prompt: str) -> str:
-        """Generate newsletter content from prompts."""
+    async def generate(self, system_prompt: str, user_prompt: str, is_chat: bool = False) -> str:
+        """Generate content from prompts with multi-model fallback."""
         import asyncio
 
         if self.active_provider == "gemini":
-            try:
-                prompt_content = f"{system_prompt}\n\nUser Request & Data:\n{user_prompt}"
-                
-                def _call_gemini():
-                    return self.gemini_client.models.generate_content(
-                        model=self.active_model,
-                        contents=prompt_content,
-                    )
+            models_to_try = [self.active_model] + [m for m in GEMINI_MODELS if m != self.active_model]
+            prompt_content = f"{system_prompt}\n\nUser Request & Data:\n{user_prompt}"
 
-                response = await asyncio.wait_for(
-                    asyncio.to_thread(_call_gemini),
-                    timeout=15.0,
-                )
-                if response and response.text:
-                    return response.text
-            except Exception as e:
-                logger.error(f"Gemini generation error or timeout: {e}. Falling back to heuristic synthesizer.")
-                return self._synthesize_fallback(user_prompt)
+            for model_name in models_to_try:
+                try:
+                    def _call_gemini(m=model_name):
+                        return self.gemini_client.models.generate_content(
+                            model=m,
+                            contents=prompt_content,
+                        )
+
+                    response = await asyncio.wait_for(
+                        asyncio.to_thread(_call_gemini),
+                        timeout=12.0,
+                    )
+                    if response and response.text:
+                        return response.text
+                except Exception as e:
+                    logger.warning(f"Gemini model {model_name} failed: {e}. Trying next model...")
+                    continue
+
+            logger.error("All Gemini models failed or timed out. Using fallback synthesizer.")
+            return self._synthesize_chat_fallback(user_prompt) if is_chat else self._synthesize_fallback(user_prompt)
 
         elif self.active_provider in ("openai", "groq", "ollama"):
             try:
@@ -130,28 +147,52 @@ class LLMClient:
                     model=self.active_model,
                     messages=[
                         {"role": "system", "content": system_prompt},
-                        {"role": "role", "content": user_prompt} if hasattr(openai, "role") else {"role": "user", "content": user_prompt},
+                        {"role": "user", "content": user_prompt},
                     ],
                     temperature=0.7,
                 )
                 return response.choices[0].message.content or ""
             except Exception as e:
                 logger.error(f"{self.active_provider} generation error: {e}. Falling back.")
-                return self._synthesize_fallback(user_prompt)
+                return self._synthesize_chat_fallback(user_prompt) if is_chat else self._synthesize_fallback(user_prompt)
 
-        return self._synthesize_fallback(user_prompt)
+        return self._synthesize_chat_fallback(user_prompt) if is_chat else self._synthesize_fallback(user_prompt)
+
+    def _synthesize_chat_fallback(self, user_prompt: str) -> str:
+        """Friendly, conversational fallback for regular chat messages."""
+        import json
+        articles = []
+        user_msg = "your message"
+        try:
+            start_idx = user_prompt.find("{")
+            if start_idx != -1:
+                end_idx = user_prompt.rfind("}") + 1
+                data = json.loads(user_prompt[start_idx:end_idx])
+                if isinstance(data, dict):
+                    user_msg = data.get("user_message", user_msg)
+                    articles = data.get("live_news_articles", [])
+        except Exception:
+            pass
+
+        if articles:
+            lines = [f"Here's what I found regarding <b>{user_msg}</b>:\n"]
+            for idx, a in enumerate(articles[:3], 1):
+                title = a.get("title", "Headline")
+                url = a.get("url", "#")
+                src = a.get("source", "News")
+                lines.append(f"• <a href=\"{url}\"><b>{title}</b></a> (<i>{src}</i>)")
+            lines.append("\nFeel free to ask me for more details or type <code>/digest</code> for the full newsletter!")
+            return "\n".join(lines)
+
+        return f"Hey there! I received your message: \"<i>{user_msg}</i>\". How can I help you today? You can ask me any question or ask for the latest news on any topic!"
 
     def _synthesize_fallback(self, raw_data_prompt: str) -> str:
-        """High quality algorithmic fallback newsletter formatter.
-        Guarantees that demos and evaluations produce beautiful output even without API keys!
-        """
+        """High quality algorithmic fallback newsletter formatter for digests."""
         import json
         date_str = datetime.now().strftime("%A, %d %B %Y")
         
-        # Try to parse articles from JSON if embedded in prompt
         articles = []
         try:
-            # Look for JSON array or object in raw prompt
             start_idx = raw_data_prompt.find("{")
             if start_idx != -1:
                 end_idx = raw_data_prompt.rfind("}") + 1
@@ -192,10 +233,6 @@ class LLMClient:
                 "<i>Source: TechCrunch</i>",
                 "Enterprise adoption of open Model Context Protocol (MCP) agents scales across developer workflows.",
                 "💡 <b>Why it matters:</b> Standardization enables plug-and-play tools across varied LLMs.\n",
-                "<b>2. <a href=\"https://news.ycombinator.com\">Open Source Reasoning Breakthroughs</a></b>",
-                "<i>Source: Hacker News</i>",
-                "Community benchmarks reflect narrowing performance gaps in algorithmic reasoning tasks.",
-                "💡 <b>Why it matters:</b> Lowers costs for local and on-device intelligent assistance.\n",
             ])
 
         newsletter_lines.extend([
@@ -204,15 +241,9 @@ class LLMClient:
             f"• <b>MCP Ecosystem:</b> Rapid adoption of standardized tool protocols simplifies multi-agent architecture.",
             f"• <b>Cloud Optimization:</b> Smaller, highly distilled models offer sub-second latency for streaming applications.\n",
             f"━━━━━━━━━━━━━━━━━━━━━━",
-            f"📌 <b>QUICK BITES</b>",
-            f"• Renewable grid milestones reached across three continents.",
-            f"• Deep space telescope data reveals surprising chemical signatures on exoplanets.",
-            f"• Autonomous robotics trial deployments expand in logistics hubs.\n",
-            f"━━━━━━━━━━━━━━━━━━━━━━",
             f"☕ <b>PARTING THOUGHT</b>",
             f"<i>\"Technology is best when it brings people together and turns complex information into actionable clarity.\"</i>",
             f"\n🤖 <i>Generated via News MCP Server & AI Agent</i>",
         ])
 
         return "\n".join(newsletter_lines)
-
